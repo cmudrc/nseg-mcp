@@ -65,6 +65,43 @@ def _lift_to_drag(weight_kg: float, cd0: float, k: float, wing_area_m2: float, m
     return CL / CD
 
 
+def thrust_required_top_of_climb(
+    weight_kg: float,
+    cd0: float,
+    k: float,
+    wing_area_m2: float,
+    mach: float,
+    altitude_m: float,
+    roc_req_m_s: float = 1.524,
+) -> dict[str, float]:
+    """Thrust required to sustain the residual top-of-climb rate at altitude.
+
+    Top-of-climb is the classic engine-sizing driver: at the cruise ceiling the
+    engine must still deliver the cruise drag *plus* enough excess thrust for a
+    residual rate of climb (FAR/industry convention is ~300 ft/min ≈ 1.524 m/s).
+
+        T_req = D + W * (ROC / V)
+
+    where ``D`` is the steady-level drag at the cruise lift coefficient and
+    ``V`` is the true airspeed.  Returns the drag, true airspeed and required
+    thrust in SI units.  This is a real physical relation – no fudge factors.
+    """
+    q = dynamic_pressure(mach, altitude_m)
+    W = weight_kg * G0
+    if q * wing_area_m2 < 1e-6 or mach <= 0.0:
+        return {"drag_n": float("nan"), "tas_m_s": float("nan"), "thrust_required_n": float("nan")}
+    CL = W / (q * wing_area_m2)
+    CD = cd0 + k * CL * CL
+    drag_n = CD * q * wing_area_m2
+    V = mach_to_tas(mach, altitude_m)
+    thrust_required_n = drag_n + W * (roc_req_m_s / max(V, 1.0))
+    return {
+        "drag_n": drag_n,
+        "tas_m_s": V,
+        "thrust_required_n": thrust_required_n,
+    }
+
+
 # ─── Individual segment solvers ─────────────────────────────────────────────
 
 

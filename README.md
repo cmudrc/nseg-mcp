@@ -28,7 +28,7 @@ Per Boeing's "one tool per MCP" guidance: NSEG and Aviary are deliberately split
 | `set_vehicle` | `weight_kg`, `wing_area_m2`, `cd0`, `k`, `tsfc_1_per_s`, `max_thrust_n` |
 | `set_segments` | Ordered list of segment dicts |
 | `configure_mission` | Convenience: `range_nmi`, `num_passengers`, `cruise_mach`, `cruise_altitude_ft` |
-| `run_mission` | Execute the segment chain |
+| `run_mission` | Execute the segment chain (now also reports a `thrust_closure` block — see below) |
 | `get_results` | Block fuel, range, time, fuel fraction, per-segment summaries |
 | `get_trajectory` | Per-segment summaries (NSEG does not produce continuous timeseries) |
 | `check_constraints` | Pass/fail evaluation of `<=`, `>=`, `==` constraints on results |
@@ -54,6 +54,25 @@ The CPACS adapter (`src/nseg_mcp/cpacs_adapter.py`) reads:
 - `//vehicles/engines/engine/analysis/mcpResults/{TSFC_1_per_s,Fn_N}`
 
 and writes results to `//vehicles/aircraft/model/analysisResults/mission` with `<backend>nseg</backend>`.
+
+## Thrust closure (does the engine actually close the mission?)
+
+The segment integrators assume thrust is always available, so on their own they
+never tell you whether an engine is big enough. `run_mission` therefore also
+reports a `thrust_closure` block evaluated at the binding sizing point — **top
+of climb** — where the engine must deliver the cruise drag plus enough excess
+thrust for a residual climb rate (~300 ft/min):
+
+```
+thrust_required_n = D_cruise + W * (ROC_residual / V)
+thrust_margin_n   = max_thrust_n (Fn from pyCycle) - thrust_required_n
+thrust_limited    = thrust_margin_n < 0
+```
+
+A negative margin means the mission does not close. This is the real signal the
+agent's engine-resizing skill (`agent-mcp/skills/SKILL_ENGINE_RESIZE.md`) drives
+on. The field is additive — existing callers and `success` semantics are
+unchanged.
 
 ## Tests
 

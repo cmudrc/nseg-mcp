@@ -5,7 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ..physics.segments import SEGMENT_DISPATCH, SegmentResult
+from ..physics.segments import (
+    SEGMENT_DISPATCH,
+    SegmentResult,
+    thrust_required_top_of_climb,
+)
 from ..session_manager import session_manager
 
 logger = logging.getLogger(__name__)
@@ -57,7 +61,7 @@ def _run_nseg(session: Any) -> dict[str, Any]:
         total_distance += result.distance_m
         total_time += result.time_s
 
-    return {
+    summary = {
         "success": True,
         "backend": "nseg",
         "initial_weight_kg": vehicle["weight_kg"],
@@ -70,6 +74,57 @@ def _run_nseg(session: Any) -> dict[str, Any]:
         "total_time_hr": total_time / 3600.0,
         "fuel_fraction": total_fuel / vehicle["weight_kg"],
         "segments": segment_results,
+    }
+
+    thrust = _thrust_closure(session.segments, vehicle, cd0, k, wing_area_m2)
+    if thrust is not None:
+        summary["thrust_closure"] = thrust
+        summary["thrust_limited"] = thrust["thrust_limited"]
+
+    return summary
+
+
+def _thrust_closure(
+    segments: list[dict[str, Any]],
+    vehicle: dict[str, Any],
+    cd0: float,
+    k: float,
+    wing_area_m2: float,
+) -> dict[str, Any] | None:
+    """Top-of-climb thrust margin: does the engine actually close the mission?
+
+    NSEG's segment integrators assume thrust is always available.  This adds a
+    real availability check at the most binding point (top of climb), comparing
+    the required thrust against the engine's installed thrust ``max_thrust_n``.
+    A negative margin means the engine is too small – the mission does not close.
+    """
+    max_thrust = vehicle.get("max_thrust_n")
+    if not max_thrust:
+        return None
+
+    cruise_seg = next((s for s in segments if s.get("type") == "cruise"), None)
+    if cruise_seg is None:
+        return None
+
+    alt = cruise_seg.get("end_altitude_m", cruise_seg.get("start_altitude_m", 0)) or 0.0
+    mach = cruise_seg.get("mach", 0.0) or 0.0
+    req = thrust_required_top_of_climb(vehicle["weight_kg"], cd0, k, wing_area_m2, mach, alt)
+
+    t_req = req["thrust_required_n"]
+    if t_req != t_req:  # NaN guard
+        return None
+
+    margin = float(max_thrust) - t_req
+    return {
+        "criterion": "top_of_climb_residual_roc",
+        "cruise_altitude_m": round(float(alt), 1),
+        "cruise_mach": round(float(mach), 4),
+        "cruise_drag_n": round(req["drag_n"], 2),
+        "thrust_required_n": round(t_req, 2),
+        "thrust_available_n": round(float(max_thrust), 2),
+        "thrust_margin_n": round(margin, 2),
+        "thrust_margin_frac": round(margin / float(max_thrust), 4),
+        "thrust_limited": bool(margin < 0.0),
     }
 
 
