@@ -79,9 +79,7 @@ def _register_tools(server: FastMCP) -> None:
 
     @server.tool(
         name="configure_mission",
-        description=(
-            "Set mission profile: range_nmi, num_passengers, cruise_mach, cruise_altitude_ft."
-        ),
+        description=("Set mission profile: range_nmi, num_passengers, cruise_mach, cruise_altitude_ft."),
         tags={"nseg", "configuration"},
     )
     def configure_mission_tool(
