@@ -134,7 +134,34 @@ def run_adapter(
     Returns (updated_cpacs_xml, summary_dict).
     """
     inputs = read_from_cpacs(cpacs_xml, mission_profile)
+
+    # Refuse to fly a mission on an impossible engine. A negative available
+    # thrust reaching this point produced a block fuel of -2.86e9 kg on a
+    # partner's machine, because every stage trusted the stage before it.
+    max_thrust = inputs.get("max_thrust_n")
+    if max_thrust is not None and float(max_thrust) <= 0.0:
+        return cpacs_xml, {
+            "success": False,
+            "error": {
+                "type": "unphysical_input",
+                "message": (
+                    f"Refusing to run a mission with a non-positive available thrust ({float(max_thrust):.6g} N)."
+                ),
+                "details": (
+                    "This value comes from the propulsion stage. Check that the "
+                    "engine sized successfully before running the mission."
+                ),
+            },
+            "solver": "nseg",
+        }
+
     results = _run_with_nseg(inputs)
+
+    unphysical = _check_mission_results(results)
+    if unphysical is not None:
+        results["success"] = False
+        results["error"] = unphysical
+        return cpacs_xml, results
 
     if results.get("success"):
         updated_xml = write_to_cpacs(cpacs_xml, results)
@@ -142,6 +169,40 @@ def run_adapter(
         updated_xml = cpacs_xml
 
     return updated_xml, results
+
+
+def _check_mission_results(results: dict[str, Any]) -> dict[str, Any] | None:
+    """Return a structured error if the mission produced impossible numbers.
+
+    An aircraft cannot burn a negative quantity of fuel. This is an
+    impossibility check, not an accuracy check: it says nothing about whether a
+    positive fuel burn is correct.
+    """
+    fuel = results.get("total_fuel_burned_kg")
+    if fuel is None:
+        fuel = results.get("fuel_burned_kg")
+    if fuel is not None and float(fuel) < 0.0:
+        return {
+            "type": "unphysical_result",
+            "message": (f"Mission returned a negative block fuel ({float(fuel):.6g} kg)."),
+            "details": (
+                "Negative fuel burn means a segment was flown with negative "
+                "thrust or negative TSFC. Check the propulsion stage before "
+                "the mission stage. The result was not written to CPACS."
+            ),
+        }
+
+    for segment in results.get("segments", []) or []:
+        seg_fuel = segment.get("fuel_burned_kg")
+        if seg_fuel is not None and float(seg_fuel) < 0.0:
+            return {
+                "type": "unphysical_result",
+                "message": (
+                    f"Mission segment '{segment.get('name', '?')}' burned negative fuel ({float(seg_fuel):.6g} kg)."
+                ),
+                "details": ("Check the thrust available in the propulsion stage. The result was not written to CPACS."),
+            }
+    return None
 
 
 def _run_with_nseg(inputs: dict[str, Any]) -> dict[str, Any]:
