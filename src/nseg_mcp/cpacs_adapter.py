@@ -58,12 +58,8 @@ def read_from_cpacs(
     if cd is not None and cd0 is not None and cl is not None and cl > 0.01:
         k = round((cd - cd0) / (cl * cl), 6)
 
-    tsfc = _float_or_none(
-        root.find(".//vehicles/engines/engine/analysis/mcpResults/TSFC_1_per_s")
-    )
-    max_thrust = _float_or_none(
-        root.find(".//vehicles/engines/engine/analysis/mcpResults/Fn_N")
-    )
+    tsfc = _float_or_none(root.find(".//vehicles/engines/engine/analysis/mcpResults/TSFC_1_per_s"))
+    max_thrust = _float_or_none(root.find(".//vehicles/engines/engine/analysis/mcpResults/Fn_N"))
 
     mp = mission_profile or {}
 
@@ -85,15 +81,17 @@ def read_from_cpacs(
 
 #: Values NSEG cannot invent, with where each one has to come from.
 _REQUIRED: tuple[tuple[str, str], ...] = (
-    ("ref_area_m2", "the CPACS reference area at "
-                    "//vehicles/aircraft/model/reference/area"),
+    ("ref_area_m2", "the CPACS reference area at //vehicles/aircraft/model/reference/area"),
     ("cd0", "the aero stage -- run SU2 first, or supply a drag polar"),
     ("k", "the aero stage -- needs CD, CD0 and CL to fit CD = CD0 + k*CL^2"),
     ("tsfc_1_per_s", "the propulsion stage -- run pyCycle first"),
     ("max_thrust_n", "the propulsion stage -- run pyCycle first"),
-    ("weight_kg", "the caller -- pass weight_kg in the mission profile "
-                  "(the orchestrator's --weight, or --oew/--payload in the "
-                  "cruise-match harness)"),
+    (
+        "weight_kg",
+        "the caller -- pass weight_kg in the mission profile "
+        "(the orchestrator's --weight, or --oew/--payload in the "
+        "cruise-match harness)",
+    ),
 )
 
 
@@ -104,17 +102,12 @@ def _check_required(inputs: dict[str, Any]) -> dict[str, Any] | None:
         return None
     return {
         "type": "missing_input",
-        "message": (
-            "Cannot fly a mission: "
-            + ", ".join(f for f, _ in missing)
-            + " not available."
-        ),
+        "message": ("Cannot fly a mission: " + ", ".join(f for f, _ in missing) + " not available."),
         "details": (
             "These are properties of the aircraft and its mission. They are "
             "not defaulted, because a substituted value would be written into "
             "the shared CPACS and read downstream as a real result. Supply "
-            "each one:\n"
-            + "\n".join(f"  - {f}: from {src}" for f, src in missing)
+            "each one:\n" + "\n".join(f"  - {f}: from {src}" for f, src in missing)
         ),
     }
 
