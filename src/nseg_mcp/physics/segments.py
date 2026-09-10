@@ -161,16 +161,29 @@ def climb_segment(
     k: float,
     wing_area_m2: float,
     tsfc_1_per_s: float,
+    roc_m_s: float = 7.62,
     **_: Any,
 ) -> SegmentResult:
     """Climb from start_altitude to end_altitude at constant Mach.
 
-    Uses an energy-method approach: integrate altitude gain in discrete steps,
-    computing drag and fuel burn at each step.  Rate of climb derived from
-    excess specific power (thrust – drag).
+    Integrates the climb in altitude steps. At each step the thrust required
+    is drag plus the component of weight along the flight path:
+
+        T = D + W*g0*sin(gamma),   sin(gamma) = ROC / V
+
+    and fuel is T * tsfc * dt with dt = dh / ROC. The rate of climb is a
+    documented, overridable mission assumption (``roc_m_s``, default 7.62 m/s
+    = 1500 ft/min, a typical transport climb rate at constant Mach); it
+    describes the manoeuvre being requested, not the aircraft.
+
+    Until 2026-09-10 the thrust term was ``W*g0*(dh/V)``, whose units are N*s,
+    added to drag in N, with an undocumented 5% thrust floor and a per-step
+    fuel clamp that hid the consequences. Climb fuel was several times too
+    high as a result.
     """
     N_STEPS = 50
     dh = (end_altitude_m - start_altitude_m) / N_STEPS
+    roc = max(abs(float(roc_m_s)), 0.1)
     W = weight_kg
     total_fuel = 0.0
     total_time = 0.0
@@ -178,25 +191,17 @@ def climb_segment(
 
     for i in range(N_STEPS):
         h = start_altitude_m + i * dh
-        V = mach_to_tas(mach, h)
-        if V < 1.0:
-            V = 1.0
+        V = max(mach_to_tas(mach, h), 1.0)
         D = _drag(W, cd0, k, wing_area_m2, mach, h)
-        T_required = D + W * G0 * (dh / max(V, 1.0))
-        T_required = max(T_required, D * 1.05)
 
-        dt = abs(dh) / max(V * 0.1, 1.0)
-        sin_gamma = dh / (V * dt) if dt > 0 else 0.0
+        sin_gamma = math.copysign(roc, dh) / V
         sin_gamma = max(-0.5, min(0.5, sin_gamma))
         cos_gamma = math.sqrt(1.0 - sin_gamma * sin_gamma)
 
-        ROC = V * sin_gamma if abs(sin_gamma) > 1e-9 else abs(dh) / max(dt, 0.01)
-        if abs(ROC) < 0.01:
-            ROC = 1.0
-        dt = abs(dh) / abs(ROC)
+        T_required = max(D + W * G0 * sin_gamma, 0.0)   # N
+        dt = abs(dh) / roc                               # s
 
-        fuel_step = T_required * tsfc_1_per_s * dt
-        fuel_step = min(fuel_step, W * 0.01)
+        fuel_step = T_required * tsfc_1_per_s * dt      # N * kg/(N s) * s = kg
         total_fuel += fuel_step
         W -= fuel_step
         total_time += dt
@@ -227,8 +232,17 @@ def cruise_segment(
 ) -> SegmentResult:
     """Cruise at constant altitude and Mach using the Breguet range equation.
 
-    Fuel burn computed via:
-        W_end = W_start * exp(-R * TSFC / (V * L/D))
+    ``tsfc_1_per_s`` is mass-based, kg/(N*s): fuel mass flow per newton of
+    thrust, which is what the propulsion stage supplies. With a mass-based
+    TSFC the weight in the Breguet exponent is m*g0, so g0 appears explicitly:
+
+        dm/dt = -tsfc * T,  T = D = m*g0 / (L/D)
+        m_end = m_start * exp(-R * tsfc * g0 / (V * L/D))
+
+    Until 2026-09-10 this omitted g0, which was consistent only with a
+    weight-based TSFC in 1/s. The propulsion adapter switched to mass-based
+    TSFC in August (the lbm/lbf fix) and this exponent was not updated, so
+    cruise fuel was understated by a factor of about g0.
     """
     V = mach_to_tas(mach, altitude_m)
     L_over_D = _lift_to_drag(weight_kg, cd0, k, wing_area_m2, mach, altitude_m)
@@ -245,7 +259,10 @@ def cruise_segment(
             end_altitude_m=altitude_m,
         )
 
-    exponent = -distance_m * tsfc_1_per_s / (V * L_over_D)
+    exponent = -distance_m * tsfc_1_per_s * G0 / (V * L_over_D)
+    # An exponent below -2 means burning more than 86% of the aircraft to get
+    # there: the mission is infeasible, not a numerical problem. Clamped so the
+    # caller still gets a finite, obviously-wrong number rather than an overflow.
     exponent = max(exponent, -2.0)
     W_end = weight_kg * math.exp(exponent)
     fuel = weight_kg - W_end
