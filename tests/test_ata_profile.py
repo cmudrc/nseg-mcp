@@ -388,3 +388,11 @@ def test_default_profile_is_unchanged_without_rules() -> None:
     assert node.find("gaps") is None
     assert node.find("segments/segment/name") is None
     assert len(node.findall("segments/segment")) == 7
+
+
+def test_ata_results_name_the_operational_assumptions() -> None:
+    """The approach thrust fraction and duration are stated in the result, not hidden."""
+    from nseg_mcp.physics.segments import APPROACH_DURATION_S, APPROACH_THRUST_FRACTION
+
+    assert APPROACH_THRUST_FRACTION == 0.3
+    assert APPROACH_DURATION_S == 180.0

@@ -105,11 +105,21 @@ def thrust_required_top_of_climb(
 # ─── Individual segment solvers ─────────────────────────────────────────────
 
 
+#: Taxi thrust as a fraction of weight when no idle fuel flow is available.
+#: An operational assumption (the NSEG convention), not an aircraft property;
+#: overridable and recorded in every result that uses it.
+TAXI_THRUST_FRACTION = 0.07
+#: Approach: thrust as a fraction of weight and duration, same status.
+APPROACH_THRUST_FRACTION = 0.3
+APPROACH_DURATION_S = 180.0
+
+
 def taxi_segment(
     weight_kg: float,
     duration_s: float,
     tsfc_1_per_s: float,
     fuel_flow_kg_s: float | None = None,
+    thrust_fraction: float = TAXI_THRUST_FRACTION,
     **_: Any,
 ) -> SegmentResult:
     """Ground taxi: constant fuel flow for a fixed duration.
@@ -119,14 +129,15 @@ def taxi_segment(
     ATA profile in :mod:`nseg_mcp.ata_mission` only flies taxi legs this way
     and lists the leg as a gap when no idle fuel flow is available.
 
-    Without it the NSEG convention is used: fuel flow approximated as 7% of
-    the weight, as thrust, times TSFC, capped at 10% of the weight. The
-    adapter's default profile keeps this behaviour.
+    Without it the NSEG convention is used: thrust equal to ``thrust_fraction``
+    of the weight (default 7 %) times TSFC times duration, capped at 10 % of the
+    weight. The fraction is an operational assumption; it is a parameter so a
+    caller can state a different one and so the result can name it.
     """
     if fuel_flow_kg_s is not None:
         fuel = float(fuel_flow_kg_s) * duration_s
     else:
-        fuel = 0.07 * weight_kg * G0 * tsfc_1_per_s * duration_s
+        fuel = thrust_fraction * weight_kg * G0 * tsfc_1_per_s * duration_s
         fuel = min(fuel, weight_kg * 0.1)
     return SegmentResult(
         segment_type="taxi",
@@ -345,12 +356,20 @@ def approach_segment(
     weight_kg: float,
     start_altitude_m: float,
     tsfc_1_per_s: float,
+    thrust_fraction: float = APPROACH_THRUST_FRACTION,
+    duration_s: float = APPROACH_DURATION_S,
     **_: Any,
 ) -> SegmentResult:
-    """Approach: slow descent from pattern altitude to runway."""
-    duration_s = 180.0
+    """Approach: slow descent from pattern altitude to runway.
+
+    Fuel is thrust times TSFC times duration with thrust taken as
+    ``thrust_fraction`` of the weight (default 0.3) for ``duration_s`` (default
+    180 s), capped at 2 % of the weight. Both are operational assumptions, not
+    aircraft properties; they are parameters so a caller can state others and
+    so the ATA profile can record them.
+    """
     distance_m = 10000.0
-    fuel = weight_kg * G0 * tsfc_1_per_s * duration_s * 0.3
+    fuel = weight_kg * G0 * tsfc_1_per_s * duration_s * thrust_fraction
     fuel = min(fuel, weight_kg * 0.02)
     return SegmentResult(
         segment_type="approach",

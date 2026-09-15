@@ -31,6 +31,9 @@ from typing import Any
 
 from nseg_mcp.physics.atmosphere import tas_to_mach
 from nseg_mcp.physics.segments import (
+    APPROACH_DURATION_S,
+    APPROACH_THRUST_FRACTION,
+    TAXI_THRUST_FRACTION,
     SegmentResult,
     approach_segment,
     climb_segment,
@@ -423,6 +426,16 @@ def run_ata_mission(inputs: dict[str, Any]) -> dict[str, Any]:
         "backend": "nseg",
         "rules": "ATA",
         "rules_note": RULES_NOTE,
+        # Operational assumptions inside the segment physics, named so a reader
+        # of the result knows they are there. Taxi legs here always use a stated
+        # idle fuel flow (or are listed as gaps), so the taxi fraction is
+        # reported as "not used".
+        "assumptions": {
+            "approach_thrust_fraction_of_weight": APPROACH_THRUST_FRACTION,
+            "approach_duration_s": APPROACH_DURATION_S,
+            "taxi_thrust_fraction_of_weight": ("not used: taxi legs need a stated idle fuel flow under ATA rules"),
+            "default_profile_taxi_thrust_fraction_of_weight": TAXI_THRUST_FRACTION,
+        },
         "initial_weight_kg": w0,
         "final_weight_kg": w,
         "total_fuel_burned_kg": block_fuel,
