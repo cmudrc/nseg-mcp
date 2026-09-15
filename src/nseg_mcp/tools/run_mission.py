@@ -52,6 +52,7 @@ def _run_nseg(session: Any) -> dict[str, Any]:
             "mach": seg_def.get("mach", 0),
             "distance_m": seg_def.get("distance_m", 0),
             "duration_s": seg_def.get("duration_s", 0),
+            "fuel_flow_kg_s": seg_def.get("fuel_flow_kg_s"),
         }
 
         result: SegmentResult = handler(**kwargs)

@@ -67,7 +67,7 @@ def _register_tools(server: FastMCP) -> None:
         name="set_segments",
         description=(
             "Define the ordered list of flight segments. Each segment has a type "
-            "(taxi/takeoff/climb/cruise/descent/approach/landing) and parameters."
+            "(taxi/takeoff/climb/cruise/descent/approach/landing/hold) and parameters."
         ),
         tags={"nseg", "segments"},
     )

@@ -117,6 +117,11 @@ def mach_to_tas(mach: float, altitude_m: float) -> float:
     return mach * isa(altitude_m).speed_of_sound_m_s
 
 
+def tas_to_mach(tas_m_s: float, altitude_m: float) -> float:
+    """Convert true airspeed [m/s] to Mach number at a given altitude."""
+    return tas_m_s / isa(altitude_m).speed_of_sound_m_s
+
+
 def dynamic_pressure(mach: float, altitude_m: float) -> float:
     """Compute dynamic pressure q = 0.5 * rho * V^2  [Pa]."""
     atm = isa(altitude_m)

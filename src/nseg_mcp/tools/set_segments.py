@@ -6,7 +6,7 @@ from typing import Any
 
 from ..session_manager import session_manager
 
-VALID_SEGMENT_TYPES = {"taxi", "takeoff", "climb", "cruise", "descent", "approach", "landing"}
+VALID_SEGMENT_TYPES = {"taxi", "takeoff", "climb", "cruise", "descent", "approach", "landing", "hold"}
 
 
 def set_segments(payload: dict[str, Any]) -> dict[str, Any]:
@@ -17,12 +17,14 @@ def set_segments(payload: dict[str, Any]) -> dict[str, Any]:
     payload : dict
         ``session_id`` – mission session to update.
         ``segments`` – list of segment dicts, each containing:
-            ``type`` – one of taxi/takeoff/climb/cruise/descent/approach/landing.
+            ``type`` – one of taxi/takeoff/climb/cruise/descent/approach/landing/hold.
             ``start_altitude_m`` – segment start altitude [m].
             ``end_altitude_m`` – segment end altitude [m].
             ``mach`` – cruise/climb Mach number.
             ``distance_m`` – segment ground distance [m] (for cruise).
-            ``duration_s`` – segment duration [s] (for taxi).
+            ``duration_s`` – segment duration [s] (for taxi and hold).
+            ``fuel_flow_kg_s`` – idle fuel flow [kg/s] (optional, for taxi; without
+            it the NSEG 7%-of-weight convention is used).
     """
     session_id = payload.get("session_id")
     if not session_id:
@@ -42,16 +44,17 @@ def set_segments(payload: dict[str, Any]) -> dict[str, Any]:
                     "message": f"Segment {i}: type '{seg_type}' not in {sorted(VALID_SEGMENT_TYPES)}",
                 }
             }
-        validated.append(
-            {
-                "type": seg_type,
-                "start_altitude_m": float(seg.get("start_altitude_m", 0)),
-                "end_altitude_m": float(seg.get("end_altitude_m", 0)),
-                "mach": float(seg.get("mach", 0)),
-                "distance_m": float(seg.get("distance_m", 0)),
-                "duration_s": float(seg.get("duration_s", 0)),
-            }
-        )
+        entry: dict[str, Any] = {
+            "type": seg_type,
+            "start_altitude_m": float(seg.get("start_altitude_m", 0)),
+            "end_altitude_m": float(seg.get("end_altitude_m", 0)),
+            "mach": float(seg.get("mach", 0)),
+            "distance_m": float(seg.get("distance_m", 0)),
+            "duration_s": float(seg.get("duration_s", 0)),
+        }
+        if seg.get("fuel_flow_kg_s") is not None:
+            entry["fuel_flow_kg_s"] = float(seg["fuel_flow_kg_s"])
+        validated.append(entry)
 
     session = session_manager.get(str(session_id))
     session.segments = validated

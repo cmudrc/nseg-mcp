@@ -1,7 +1,7 @@
 """Segment-level equations of motion for mission analysis.
 
 Modelled after the NSEG segmented-mission approach: each flight phase
-(taxi, takeoff, climb, cruise, descent, approach, landing) is computed
+(taxi, takeoff, climb, cruise, descent, approach, landing, hold) is computed
 with simplified energy-based or Breguet-style equations.
 
 All SI units unless noted.
@@ -13,7 +13,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from .atmosphere import G0, dynamic_pressure, mach_to_tas
+from .atmosphere import G0, dynamic_pressure, isa, mach_to_tas
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,15 +109,25 @@ def taxi_segment(
     weight_kg: float,
     duration_s: float,
     tsfc_1_per_s: float,
+    fuel_flow_kg_s: float | None = None,
     **_: Any,
 ) -> SegmentResult:
     """Ground taxi: constant fuel flow for a fixed duration.
 
-    Fuel flow approximated as 7% of max thrust * TSFC (NSEG convention).
+    With ``fuel_flow_kg_s`` given (an idle fuel flow, from the propulsion
+    stage or stated by the caller) the fuel is simply flow * duration. The
+    ATA profile in :mod:`nseg_mcp.ata_mission` only flies taxi legs this way
+    and lists the leg as a gap when no idle fuel flow is available.
+
+    Without it the NSEG convention is used: fuel flow approximated as 7% of
+    the weight, as thrust, times TSFC, capped at 10% of the weight. The
+    adapter's default profile keeps this behaviour.
     """
-    fuel_flow_kg_s = 0.07 * weight_kg * G0 * tsfc_1_per_s
-    fuel = fuel_flow_kg_s * duration_s
-    fuel = min(fuel, weight_kg * 0.1)
+    if fuel_flow_kg_s is not None:
+        fuel = float(fuel_flow_kg_s) * duration_s
+    else:
+        fuel = 0.07 * weight_kg * G0 * tsfc_1_per_s * duration_s
+        fuel = min(fuel, weight_kg * 0.1)
     return SegmentResult(
         segment_type="taxi",
         fuel_burned_kg=fuel,
@@ -198,10 +208,10 @@ def climb_segment(
         sin_gamma = max(-0.5, min(0.5, sin_gamma))
         cos_gamma = math.sqrt(1.0 - sin_gamma * sin_gamma)
 
-        T_required = max(D + W * G0 * sin_gamma, 0.0)   # N
-        dt = abs(dh) / roc                               # s
+        T_required = max(D + W * G0 * sin_gamma, 0.0)  # N
+        dt = abs(dh) / roc  # s
 
-        fuel_step = T_required * tsfc_1_per_s * dt      # N * kg/(N s) * s = kg
+        fuel_step = T_required * tsfc_1_per_s * dt  # N * kg/(N s) * s = kg
         total_fuel += fuel_step
         W -= fuel_step
         total_time += dt
@@ -375,6 +385,77 @@ def landing_segment(
     )
 
 
+def min_drag_speed(
+    weight_kg: float,
+    altitude_m: float,
+    cd0: float,
+    k: float,
+    wing_area_m2: float,
+) -> float:
+    """True airspeed [m/s] for level flight at the minimum-drag point of the polar.
+
+    CD = cd0 + k*CL^2 has its best lift-to-drag ratio where the induced drag
+    equals the zero-lift drag, CL_md = sqrt(cd0 / k). Lift = weight at that
+    CL fixes the speed: V = sqrt(2*m*g0 / (rho*S*CL_md)).
+
+    Raises ``ValueError`` when cd0 or k is not positive, because the polar
+    then has no minimum-drag point.
+    """
+    if cd0 <= 0.0 or k <= 0.0:
+        raise ValueError(
+            f"The polar has no minimum-drag point unless cd0 and k are positive; got cd0={cd0!r}, k={k!r}."
+        )
+    if weight_kg <= 0.0 or wing_area_m2 <= 0.0:
+        raise ValueError(f"Need a positive weight and wing area; got weight_kg={weight_kg!r}, S={wing_area_m2!r}.")
+    cl_md = math.sqrt(cd0 / k)
+    rho = isa(altitude_m).density_kg_m3
+    return math.sqrt(2.0 * weight_kg * G0 / (rho * wing_area_m2 * cl_md))
+
+
+def hold_segment(
+    weight_kg: float,
+    altitude_m: float,
+    duration_s: float,
+    cd0: float,
+    k: float,
+    wing_area_m2: float,
+    tsfc_1_per_s: float,
+    **_: Any,
+) -> SegmentResult:
+    """Hold at constant altitude for a fixed time at the minimum-drag speed.
+
+    The aircraft flies at CL_md = sqrt(cd0 / k) (see :func:`min_drag_speed`),
+    where the lift-to-drag ratio is at its maximum,
+
+        (L/D)_max = 1 / (2*sqrt(cd0*k)),
+
+    so level flight needs T = D = m*g0 / (L/D)_max and the fuel is
+    T * tsfc * duration. The drag is evaluated at the entry weight: a hold
+    burns a small fraction of the aircraft, so the change of weight over the
+    hold is neglected rather than integrated. A hold is flown around a fix
+    and earns no range credit, so ``distance_m`` is zero.
+    """
+    if duration_s < 0.0:
+        raise ValueError(f"Hold duration must not be negative; got {duration_s!r} s.")
+    if cd0 <= 0.0 or k <= 0.0:
+        raise ValueError(
+            f"The polar has no minimum-drag point unless cd0 and k are positive; got cd0={cd0!r}, k={k!r}."
+        )
+    ld_max = 1.0 / (2.0 * math.sqrt(cd0 * k))
+    drag_n = weight_kg * G0 / ld_max
+    fuel = drag_n * tsfc_1_per_s * duration_s
+    return SegmentResult(
+        segment_type="hold",
+        fuel_burned_kg=fuel,
+        distance_m=0.0,
+        time_s=duration_s,
+        start_weight_kg=weight_kg,
+        end_weight_kg=weight_kg - fuel,
+        start_altitude_m=altitude_m,
+        end_altitude_m=altitude_m,
+    )
+
+
 SEGMENT_DISPATCH: dict[str, Any] = {
     "taxi": taxi_segment,
     "takeoff": takeoff_segment,
@@ -383,4 +464,5 @@ SEGMENT_DISPATCH: dict[str, Any] = {
     "descent": descent_segment,
     "approach": approach_segment,
     "landing": landing_segment,
+    "hold": hold_segment,
 }
