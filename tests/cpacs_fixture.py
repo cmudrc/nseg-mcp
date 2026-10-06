@@ -23,6 +23,9 @@ def make_cpacs(
     mtom_kg: float | None = None,
     with_header: bool = True,
     with_updates: bool = True,
+    aero_mach: float | None = None,
+    engine_mach: float | None = None,
+    engine_altitude_ft: float | None = None,
 ) -> str:
     updates = ""
     if with_updates:
@@ -50,14 +53,19 @@ def make_cpacs(
             "</designMasses></massBreakdown></analyses>"
         )
 
+    aero_cond = f"<mach>{aero_mach}</mach>" if aero_mach is not None else ""
+    engine_cond = f"<mach>{engine_mach}</mach>" if engine_mach is not None else ""
+    if engine_altitude_ft is not None:
+        engine_cond += f"<altitudeFt>{engine_altitude_ft}</altitudeFt>"
+
     return (
         "<?xml version='1.0' encoding='utf-8'?>"
         f"<cpacs>{header}<vehicles><aircraft><model uID='test'><name>test</name>"
         f"<reference><area>{REF_AREA_M2}</area></reference>{masses}"
-        "<analysisResults><aero><coefficients>"
+        f"<analysisResults><aero>{aero_cond}<coefficients>"
         f"<CL>{CL}</CL><CD>{CD}</CD><CD0>{CD0}</CD0>"
         "</coefficients></aero></analysisResults></model></aircraft>"
-        "<engines><engine uID='e'><analysis><mcpResults>"
+        f"<engines><engine uID='e'><analysis><mcpResults>{engine_cond}"
         f"<TSFC_1_per_s>{TSFC_1_PER_S}</TSFC_1_per_s><Fn_N>{FN_N}</Fn_N>"
         "</mcpResults></analysis></engine></engines></vehicles></cpacs>"
     )

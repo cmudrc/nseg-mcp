@@ -77,6 +77,14 @@ def read_from_cpacs(
     tsfc = _float_or_none(root.find(".//vehicles/engines/engine/analysis/mcpResults/TSFC_1_per_s"))
     max_thrust = _float_or_none(root.find(".//vehicles/engines/engine/analysis/mcpResults/Fn_N"))
 
+    # The flight condition each upstream result was computed at, as the SU2
+    # and pyCycle stages record it. The file holds one aero result and one
+    # engine result, whichever ran last, so these are what a mission at a
+    # different cruise point would silently borrow (_check_condition_match).
+    aero_mach = _float_or_none(root.find(".//vehicles/aircraft/model/analysisResults/aero/mach"))
+    engine_mach = _float_or_none(root.find(".//vehicles/engines/engine/analysis/mcpResults/mach"))
+    engine_alt_ft = _float_or_none(root.find(".//vehicles/engines/engine/analysis/mcpResults/altitudeFt"))
+
     mp = mission_profile or {}
 
     # Take-off weight: the caller's value first, then the mass the file itself
@@ -102,6 +110,9 @@ def read_from_cpacs(
         "k": k,
         "tsfc_1_per_s": tsfc,
         "max_thrust_n": max_thrust,
+        "aero_mach": aero_mach,
+        "engine_mach": engine_mach,
+        "engine_altitude_ft": engine_alt_ft,
         "weight_kg": weight,
         "weight_source": weight_source,
         # Mission request, not aircraft property -- defaults are fine here.
@@ -155,6 +166,71 @@ def _check_required(inputs: dict[str, Any]) -> dict[str, Any] | None:
             "each one:\n" + "\n".join(f"  - {f}: from {src}" for f, src in missing)
         ),
     }
+
+
+#: How far the stored aero and engine results may sit from the mission's
+#: cruise point before the mission refuses to use them.
+MACH_TOLERANCE = 0.005
+ALTITUDE_TOLERANCE_FT = 100.0
+
+
+def _check_condition_match(inputs: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    """Refuse a mission whose drag polar or engine was computed elsewhere.
+
+    The file keeps one SU2 result and one pyCycle result, whichever ran
+    last. Asked to compare two cruise Mach numbers, an agent ran SU2 at
+    both, then the engine at both, then the mission at both: each mission
+    read the polar of the last SU2 run, so both fuel figures came from the
+    same Mach 0.70 aerodynamics and the comparison was meaningless, though
+    every number in it was a real solver output (dry run, 2026-10-05).
+
+    Returns (error or None, a one-line statement of what was checked). A
+    result that states no Mach (older files, a hand-supplied polar) cannot
+    be checked, and the statement says so.
+    """
+    mach = float(inputs["cruise_mach"])
+    alt_ft = float(inputs["cruise_altitude_m"]) * 3.28084
+    problems: list[str] = []
+    checked: list[str] = []
+    unchecked: list[str] = []
+
+    aero_mach = inputs.get("aero_mach")
+    if aero_mach is None or aero_mach <= 0:
+        unchecked.append("aero (no Mach recorded)")
+    elif abs(aero_mach - mach) > MACH_TOLERANCE:
+        problems.append(f"the drag polar was computed by SU2 at Mach {aero_mach:g}")
+    else:
+        checked.append(f"aero at Mach {aero_mach:g}")
+
+    engine_mach = inputs.get("engine_mach")
+    engine_alt = inputs.get("engine_altitude_ft")
+    if engine_mach is None or engine_mach <= 0:
+        unchecked.append("engine (no Mach recorded)")
+    elif abs(engine_mach - mach) > MACH_TOLERANCE:
+        problems.append(f"the engine was sized by pyCycle at Mach {engine_mach:g}")
+    else:
+        checked.append(f"engine at Mach {engine_mach:g}")
+    if engine_alt is not None and engine_alt > 0 and abs(engine_alt - alt_ft) > ALTITUDE_TOLERANCE_FT:
+        problems.append(f"the engine was sized at {engine_alt:,.0f} ft")
+
+    if problems:
+        return {
+            "type": "inconsistent_inputs",
+            "message": (
+                f"Cannot fly a mission cruising at Mach {mach:g} and {alt_ft:,.0f} ft: " + "; ".join(problems) + "."
+            ),
+            "details": (
+                "The file holds only the most recent aerodynamic and engine "
+                "results. Run su2_run_aero and pycycle_run_engine at this "
+                "cruise point first, then the mission; to compare cruise "
+                "points, run all three stages for one point before starting "
+                "the next."
+            ),
+        }, ""
+    note = "cruise point matches " + (", ".join(checked) if checked else "nothing checkable")
+    if unchecked:
+        note += "; not checked: " + ", ".join(unchecked)
+    return None, note
 
 
 def _build_default_segments(inputs: dict[str, Any]) -> list[dict[str, Any]]:
@@ -400,11 +476,20 @@ def run_adapter(
             "solver": "nseg",
         }
 
+    mismatch, condition_check = _check_condition_match(inputs)
+    if mismatch is not None:
+        return cpacs_xml, {
+            "success": False,
+            "error": mismatch,
+            "solver": "nseg",
+        }
+
     if inputs["rules"] == "ATA":
         results = run_ata_mission(inputs)
     else:
         results = _run_with_nseg(inputs)
     results["weight_source"] = inputs["weight_source"]
+    results["condition_check"] = condition_check
 
     unphysical = _check_mission_results(results)
     if unphysical is not None:
