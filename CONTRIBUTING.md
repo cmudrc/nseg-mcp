@@ -12,12 +12,6 @@ make dev
 
 The `dev` extra installs linting, formatting, typing, testing, and pre-commit tooling.
 
-To enable NASA Aviary (trajectory optimization):
-
-```bash
-pip install -e ".[aviary]"
-```
-
 ## Local Quality Checks
 
 Run these before opening a pull request:
@@ -50,8 +44,9 @@ pre-commit run --all-files
 - Mypy for static type checking.
 - Pytest for tests.
 
-## Backends
+## Backend
 
-- **Aviary** (primary): NASA's trajectory optimizer. Requires `openmdao==3.36.0`,
-  `dymos==1.13.1`, `aviary==0.9.10`.
-- **NSEG** (fallback): Built-in segment physics. No extra dependencies.
+NSEG: built-in segment physics, with no extra dependencies. NASA Aviary
+missions are a separate server,
+[`aviary-cpacs-mcp`](https://github.com/cmudrc/aviary-cpacs-mcp); the caller
+chooses one of the two per run.
