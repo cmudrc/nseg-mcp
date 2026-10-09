@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
+import os
+import re
 from datetime import UTC, datetime
 from typing import Any
 from xml.etree import ElementTree as ET
@@ -384,6 +386,23 @@ def _modification_sentence(results: dict[str, Any]) -> str:
     )
 
 
+#: A session id as the aircraft-runs session logs make it.
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _session_suffix() -> str:
+    """Return ``" [session <id>]"`` when this process belongs to a session.
+
+    The aircraft-mcp gateway and the local agent put their session-log id in
+    ``AIRCRAFT_SESSION_ID`` (2026-10-08), so each ``header/updates`` entry
+    names the session whose log holds the call that made it. The CPACS schema
+    has no field for this, so it goes at the end of the modification text.
+    Outside a session the text is unchanged.
+    """
+    sid = os.environ.get("AIRCRAFT_SESSION_ID", "").strip()
+    return f" [session {sid}]" if sid and _SESSION_ID_RE.match(sid) else ""
+
+
 def _append_header_update(root: ET.Element, results: dict[str, Any]) -> None:
     """Append one provenance entry under ``header/updates``.
 
@@ -412,7 +431,7 @@ def _append_header_update(root: ET.Element, results: dict[str, Any]) -> None:
     count = len(updates.findall("update"))
 
     update = ET.SubElement(updates, "update")
-    ET.SubElement(update, "modification").text = _modification_sentence(results)
+    ET.SubElement(update, "modification").text = _modification_sentence(results) + _session_suffix()
     ET.SubElement(update, "creator").text = f"nseg-mcp {_package_version()}"
     ET.SubElement(update, "timestamp").text = (
         datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
